@@ -35,10 +35,14 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     try {
-      const { categories } = req.body;
-      if (!Array.isArray(categories)) {
-        return res.status(400).json({ error: 'categories 배열이 필요해요' });
-      }
+      let categories = req.body.categories;
+// n8n이 문자열로 보내는 경우 파싱
+if (typeof categories === 'string') {
+  try { categories = JSON.parse(categories); } catch(e) {}
+}
+if (!Array.isArray(categories)) {
+  return res.status(400).json({ error: 'categories 배열이 필요해요', received: typeof categories });
+}
       const payload = {
         categories,
         savedAt: new Date().toISOString(),
