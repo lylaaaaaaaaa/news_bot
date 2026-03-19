@@ -1,0 +1,130 @@
+{
+  "name": "오늘의 브리핑 - 자동화",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 0 * * *" }] }
+      },
+      "id": "node-cron",
+      "name": "매일 9시 (KST=UTC0시)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-api-key", "value": "={{ $vars.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" },
+          { "name": "anthropic-beta", "value": "web-search-2025-03-05" }
+        ]},
+        "specifyBody": "json",
+        "jsonBody": "={ \"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 4000, \"tools\": [{\"type\": \"web_search_20250305\", \"name\": \"web_search\"}], \"messages\": [{\"role\": \"user\", \"content\": \"오늘({{ $now.setZone('Asia/Seoul').toFormat('yyyy년 MM월 dd일') }}) 한국 주요 뉴스를 검색해서 정치, 경제, 사회, 연예/문화, IT·테크, 국제 카테고리별로 핵심 뉴스 1~2개씩 제목, 내용 요약, 기사 URL을 포함해서 알려줘.\"}] }"
+      },
+      "id": "node-search",
+      "name": "1단계: 뉴스 검색",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const content = $input.item.json.content || [];\nconst newsText = content.filter(b => b.type === 'text').map(b => b.text).join('\\n');\nif (!newsText || newsText.length < 30) throw new Error('검색 결과 없음');\nreturn [{ json: { newsText } }];"
+      },
+      "id": "node-extract",
+      "name": "텍스트 추출",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-api-key", "value": "={{ $vars.ANTHROPIC_API_KEY }}" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "specifyBody": "json",
+        "jsonBody": "={ \"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 4000, \"messages\": [{\"role\": \"user\", \"content\": \"아래 뉴스를 JSON으로만 변환해. 마크다운, 코드블록, 설명 없이 순수 JSON만.\\n\\n뉴스:\\n{{ $json.newsText }}\\n\\n형식:{\\\"categories\\\":[{\\\"name\\\":\\\"정치\\\",\\\"items\\\":[{\\\"headline\\\":\\\"제목\\\",\\\"summary\\\":\\\"요약\\\",\\\"why\\\":\\\"이유\\\",\\\"url\\\":\\\"https://...\\\"}]},{\\\"name\\\":\\\"경제\\\",\\\"items\\\":[{\\\"headline\\\":\\\"제목\\\",\\\"summary\\\":\\\"요약\\\",\\\"why\\\":\\\"이유\\\",\\\"url\\\":\\\"\\\"}]},{\\\"name\\\":\\\"사회\\\",\\\"items\\\":[{\\\"headline\\\":\\\"제목\\\",\\\"summary\\\":\\\"요약\\\",\\\"why\\\":\\\"이유\\\",\\\"url\\\":\\\"\\\"}]},{\\\"name\\\":\\\"연예/문화\\\",\\\"items\\\":[{\\\"headline\\\":\\\"제목\\\",\\\"summary\\\":\\\"요약\\\",\\\"why\\\":\\\"이유\\\",\\\"url\\\":\\\"\\\"}]},{\\\"name\\\":\\\"IT·테크\\\",\\\"items\\\":[{\\\"headline\\\":\\\"제목\\\",\\\"summary\\\":\\\"요약\\\",\\\"why\\\":\\\"이유\\\",\\\"url\\\":\\\"\\\"}]},{\\\"name\\\":\\\"국제\\\",\\\"items\\\":[{\\\"headline\\\":\\\"제목\\\",\\\"summary\\\":\\\"요약\\\",\\\"why\\\":\\\"이유\\\",\\\"url\\\":\\\"\\\"}]}]}\"}] }"
+      },
+      "id": "node-format",
+      "name": "2단계: JSON 변환",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const content = $input.item.json.content || [];\nlet raw = content.filter(b => b.type === 'text').map(b => b.text).join('\\n').trim();\nraw = raw.replace(/^```[a-z]*\\s*/i, '').replace(/\\s*```$/, '').trim();\nconst s = raw.indexOf('{'), e = raw.lastIndexOf('}');\nif (s < 0 || e < 0) throw new Error('JSON 없음');\nconst parsed = JSON.parse(raw.slice(s, e + 1));\nif (!Array.isArray(parsed.categories)) throw new Error('categories 없음');\nreturn [{ json: { categories: parsed.categories } }];"
+      },
+      "id": "node-parse",
+      "name": "JSON 파싱",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.VERCEL_SITE_URL }}/api/news",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-secret", "value": "={{ $vars.SAVE_SECRET }}" }
+        ]},
+        "specifyBody": "json",
+        "jsonBody": "={ \"categories\": {{ JSON.stringify($json.categories) }} }"
+      },
+      "id": "node-save",
+      "name": "Vercel KV 저장",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cats = $input.item.json.categories;\nconst today = new Date();\nconst dateStr = today.toLocaleDateString('ko-KR', {year:'numeric',month:'long',day:'numeric',weekday:'long'});\nconst siteUrl = $vars.VERCEL_SITE_URL || 'https://your-site.vercel.app';\n\nlet rows = '';\ncats.forEach(cat => {\n  rows += `<tr><td style=\"padding:20px 0 8px\"><p style=\"margin:0;font-size:10px;font-weight:700;letter-spacing:0.25em;color:#b5451b;text-transform:uppercase;border-bottom:1px solid #c8c0b0;padding-bottom:8px\">${cat.name}</p></td></tr>`;\n  (cat.items||[]).forEach(item => {\n    const hl = item.url ? `<a href=\"${item.url}\" style=\"color:#1a1a1a;text-decoration:none\">${item.headline}</a>` : item.headline;\n    rows += `<tr><td style=\"padding:10px 0 14px;border-bottom:1px solid #ede8dc\">\n      <p style=\"margin:0 0 6px;font-size:15px;font-weight:600;line-height:1.5\">${hl}</p>\n      <p style=\"margin:0 0 6px;font-size:13px;line-height:1.7;color:#4a4540;font-weight:300\">${item.summary}</p>\n      ${item.why ? `<p style=\"margin:4px 0 0;font-size:11px;color:#7a7068;font-style:italic;padding-left:8px;border-left:2px solid #c9a84c\">${item.why}</p>` : ''}\n      ${item.url ? `<p style=\"margin:8px 0 0\"><a href=\"${item.url}\" style=\"font-size:11px;color:#b5451b;text-decoration:none\">기사 원문 →</a></p>` : ''}\n    </td></tr>`;\n  });\n});\n\nconst html = `<!DOCTYPE html><html lang=\"ko\"><head><meta charset=\"UTF-8\"></head>\n<body style=\"margin:0;padding:0;background:#f0ebe2\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td align=\"center\" style=\"padding:30px 16px\">\n<table width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#f5f0e8\">\n  <tr><td style=\"padding:32px 36px 20px;border-bottom:3px double #c8c0b0;text-align:center\">\n    <p style=\"margin:0 0 6px;font-size:10px;letter-spacing:0.3em;color:#7a7068;text-transform:uppercase\">Daily Intelligence</p>\n    <h1 style=\"margin:0;font-size:36px;font-weight:700;color:#1a1a1a\">오늘의 브리핑</h1>\n    <p style=\"margin:10px 0 0;font-size:12px;color:#7a7068\">${dateStr}</p>\n  </td></tr>\n  <tr><td style=\"padding:0 36px 24px\"><table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">${rows}</table></td></tr>\n  <tr><td style=\"padding:16px 36px;border-top:3px double #c8c0b0;text-align:center\">\n    <a href=\"${siteUrl}\" style=\"font-size:12px;color:#b5451b;text-decoration:none\">웹에서 보기 →</a>\n    <p style=\"margin:8px 0 0;font-size:11px;color:#7a7068\">AI가 오늘의 주요 뉴스를 선별합니다</p>\n  </td></tr>\n</table></td></tr></table></body></html>`;\n\nreturn [{ json: { emailHtml: html, dateStr } }];"
+      },
+      "id": "node-email-build",
+      "name": "이메일 HTML 생성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 400]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $vars.RECIPIENT_EMAIL }}",
+        "subject": "=📰 오늘의 브리핑 — {{ $now.setZone('Asia/Seoul').toFormat('M월 d일') }}",
+        "emailType": "html",
+        "message": "={{ $json.emailHtml }}",
+        "options": {}
+      },
+      "id": "node-gmail",
+      "name": "Gmail 발송",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1420, 400]
+    }
+  ],
+  "connections": {
+    "매일 9시 (KST=UTC0시)": { "main": [[{ "node": "1단계: 뉴스 검색", "type": "main", "index": 0 }]] },
+    "1단계: 뉴스 검색": { "main": [[{ "node": "텍스트 추출", "type": "main", "index": 0 }]] },
+    "텍스트 추출": { "main": [[{ "node": "2단계: JSON 변환", "type": "main", "index": 0 }]] },
+    "2단계: JSON 변환": { "main": [[{ "node": "JSON 파싱", "type": "main", "index": 0 }]] },
+    "JSON 파싱": {
+      "main": [[
+        { "node": "Vercel KV 저장", "type": "main", "index": 0 },
+        { "node": "이메일 HTML 생성", "type": "main", "index": 0 }
+      ]]
+    },
+    "이메일 HTML 생성": { "main": [[{ "node": "Gmail 발송", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오늘의 브리핑</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&family=Noto+Sans+KR:wght@300;400;500&display=swap');
+  :root { --ink:#1a1a1a; --paper:#f5f0e8; --cream:#ede8dc; --accent:#b5451b; --gold:#c9a84c; --muted:#7a7068; --rule:#c8c0b0; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); font-family:'Noto Sans KR',sans-serif; min-height:100vh; }
+  .container { max-width:780px; margin:0 auto; padding:0 20px 60px; }
+  .masthead { text-align:center; padding:36px 0 20px; border-bottom:3px double var(--rule); }
+  .masthead-label { font-size:10px; font-weight:500; letter-spacing:0.3em; color:var(--muted); text-transform:uppercase; margin-bottom:8px; }
+  .masthead h1 { font-family:'Noto Serif KR',serif; font-size:clamp(32px,7vw,56px); font-weight:700; letter-spacing:-0.02em; }
+  .masthead-date { font-size:12px; color:var(--muted); margin-top:10px; letter-spacing:0.1em; }
+  .loading-state { text-align:center; padding:60px 0; }
+  .ink-drop { display:inline-block; width:8px; height:8px; background:var(--accent); border-radius:50%; animation:inkPulse 1.2s ease-in-out infinite; margin:0 4px; }
+  .ink-drop:nth-child(2){animation-delay:.2s} .ink-drop:nth-child(3){animation-delay:.4s}
+  @keyframes inkPulse { 0%,100%{transform:scale(.6);opacity:.3} 50%{transform:scale(1.2);opacity:1} }
+  .loading-text { font-size:13px; color:var(--muted); margin-top:16px; letter-spacing:0.05em; }
+  .not-ready { text-align:center; padding:60px 20px; }
+  .not-ready-icon { font-size:36px; margin-bottom:16px; }
+  .not-ready h2 { font-family:'Noto Serif KR',serif; font-size:20px; margin-bottom:8px; }
+  .not-ready p { font-size:13px; color:var(--muted); line-height:1.7; }
+  .section-divider { display:flex; align-items:center; gap:12px; margin:28px 0 16px; }
+  .section-divider::before,.section-divider::after { content:''; flex:1; height:1px; background:var(--rule); }
+  .section-label { font-size:10px; font-weight:500; letter-spacing:0.3em; color:var(--muted); text-transform:uppercase; white-space:nowrap; }
+  .category-block { margin-bottom:6px; }
+  .category-header { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
+  .category-name { font-family:'Noto Serif KR',serif; font-size:11px; font-weight:700; letter-spacing:0.2em; color:var(--accent); text-transform:uppercase; }
+  .category-rule { flex:1; height:1px; border-top:1px solid var(--rule); }
+  .news-item { padding:14px 0; border-bottom:1px solid var(--cream); animation:fadeInUp .4s ease forwards; opacity:0; }
+  .news-item:last-child { border-bottom:none; }
+  @keyframes fadeInUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .news-headline { font-family:'Noto Serif KR',serif; font-size:15px; font-weight:600; line-height:1.5; color:var(--ink); margin-bottom:6px; }
+  .news-headline a { color:inherit; text-decoration:none; border-bottom:1px solid transparent; transition:border-color .2s; }
+  .news-headline a:hover { border-bottom-color:var(--accent); }
+  .news-summary { font-size:13px; line-height:1.7; color:#4a4540; font-weight:300; }
+  .news-why { display:inline-block; margin-top:8px; font-size:11px; color:var(--muted); border-left:2px solid var(--gold); padding-left:8px; font-style:italic; }
+  .news-link { display:inline-block; margin-top:8px; font-size:11px; color:var(--accent); text-decoration:none; }
+  .news-link:hover { text-decoration:underline; }
+  .footer-rule { border:none; border-top:3px double var(--rule); margin:40px 0 20px; }
+  .footer-text { text-align:center; font-size:11px; color:var(--muted); letter-spacing:0.1em; }
+  .saved-at { text-align:center; font-size:11px; color:var(--muted); margin-top:6px; }
+  #content { display:none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="masthead">
+    <div class="masthead-label">Daily Intelligence</div>
+    <h1>오늘의 브리핑</h1>
+    <div class="masthead-date" id="today-date"></div>
+  </div>
+
+  <div class="loading-state" id="loading">
+    <div><span class="ink-drop"></span><span class="ink-drop"></span><span class="ink-drop"></span></div>
+    <div class="loading-text">브리핑을 불러오고 있어요...</div>
+  </div>
+
+  <div class="not-ready" id="not-ready" style="display:none">
+    <div class="not-ready-icon">☕</div>
+    <h2>아직 준비 중이에요</h2>
+    <p>매일 오전 9시에 업데이트됩니다<br>조금 후에 다시 확인해 주세요</p>
+  </div>
+
+  <div id="content"></div>
+
+  <hr class="footer-rule">
+  <div class="footer-text">AI가 오늘의 주요 뉴스를 선별합니다</div>
+  <div class="saved-at" id="saved-at"></div>
+</div>
+
+<script>
+document.getElementById('today-date').textContent =
+  new Date().toLocaleDateString('ko-KR', {year:'numeric',month:'long',day:'numeric',weekday:'long'});
+
+async function loadBriefing() {
+  try {
+    const res = await fetch('/api/news');
+    const data = await res.json();
+
+    document.getElementById('loading').style.display = 'none';
+
+    if (!data.ready || !data.categories) {
+      document.getElementById('not-ready').style.display = 'block';
+      return;
+    }
+
+    renderBriefing(data.categories);
+
+    if (data.savedAt) {
+      const t = new Date(data.savedAt).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+      document.getElementById('saved-at').textContent = `오전 ${t} 업데이트`;
+    }
+  } catch(e) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('not-ready').style.display = 'block';
+  }
+}
+
+function renderBriefing(categories) {
+  const content = document.getElementById('content');
+  let html = `<div class="section-divider"><span class="section-label">Today's Headlines</span></div>`;
+  categories.forEach((cat, ci) => {
+    const items = (cat.items||[]).map((item, ii) => {
+      const hl = item.url
+        ? `<a href="${item.url}" target="_blank" rel="noopener">${item.headline}</a>`
+        : item.headline;
+      const link = item.url
+        ? `<a class="news-link" href="${item.url}" target="_blank" rel="noopener">기사 원문 →</a>`
+        : '';
+      return `<div class="news-item" style="animation-delay:${(ci*2+ii)*0.08}s">
+        <div class="news-headline">${hl}</div>
+        <div class="news-summary">${item.summary||''}</div>
+        ${item.why ? `<div class="news-why">${item.why}</div>` : ''}
+        ${link}
+      </div>`;
+    }).join('');
+    html += `<div class="category-block">
+      <div class="category-header"><span class="category-name">${cat.name}</span><span class="category-rule"></span></div>
+      ${items}
+    </div>`;
+  });
+  content.innerHTML = html;
+  content.style.display = 'block';
+}
+
+loadBriefing();
+</script>
+</body>
+</html>
