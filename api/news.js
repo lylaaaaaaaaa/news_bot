@@ -44,7 +44,7 @@ export default async function handler(req, res) {
         dateStr: getKSTDateStr()
       };
       const blob = await put(filename, JSON.stringify(payload), {
-        access: 'private',
+        access: 'public',
         contentType: 'application/json',
         addRandomSuffix: false
       });
