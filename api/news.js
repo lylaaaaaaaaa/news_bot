@@ -35,28 +35,9 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     try {
-     let categories = req.body.categories;
-
-if (!Array.isArray(categories)) {
-  if (Array.isArray(req.body)) {
-    categories = req.body;
-  } else {
-    try {
-      const parsed = typeof categories === 'string' 
-        ? JSON.parse(categories.replace(/^=/, ''))
-        : categories;
-      if (Array.isArray(parsed)) categories = parsed;
-    } catch(e) {}
-  }
-}
-
-if (!Array.isArray(categories)) {
-  return res.status(400).json({ 
-    error: 'categories 배열이 필요해요', 
-    received: typeof categories,
-    body: JSON.stringify(req.body).slice(0, 300)
-  });
-}
+     let categories = req.body.categoriesJson 
+  ? JSON.parse(req.body.categoriesJson)
+  : req.body.categories;
       const payload = {
         categories,
         savedAt: new Date().toISOString(),
