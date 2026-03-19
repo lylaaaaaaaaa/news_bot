@@ -105,12 +105,9 @@ function renderBriefing(categories) {
   let html = `<div class="section-divider"><span class="section-label">Today's Headlines</span></div>`;
   categories.forEach((cat, ci) => {
     const items = (cat.items||[]).map((item, ii) => {
-      const hl = item.url
-        ? `<a href="${item.url}" target="_blank" rel="noopener">${item.headline}</a>`
-        : item.headline;
-      const link = item.url
-        ? `<a class="news-link" href="${item.url}" target="_blank" rel="noopener">기사 원문 →</a>`
-        : '';
+     const searchUrl = 'https://search.naver.com/search.naver?where=news&query=' + encodeURIComponent(item.headline);
+const hl = `<a href="${searchUrl}" target="_blank" rel="noopener">${item.headline}</a>`;
+const link = `<a class="news-link" href="${searchUrl}" target="_blank" rel="noopener">관련 기사 검색 →</a>`;
       return `<div class="news-item" style="animation-delay:${(ci*2+ii)*0.08}s">
         <div class="news-headline">${hl}</div>
         <div class="news-summary">${item.summary||''}</div>
