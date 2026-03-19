@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { put, head, getDownloadUrl } from '@vercel/blob';
 
 function getKSTDateStr() {
   const now = new Date();
@@ -12,20 +12,24 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-secret');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const todayKey = `briefing:${getKSTDateStr()}`;
+  const filename = `briefing-${getKSTDateStr()}.json`;
 
+  // GET: 오늘 브리핑 데이터 조회
   if (req.method === 'GET') {
     try {
-      const data = await kv.get(todayKey);
-      if (!data) {
+      const url = `https://${process.env.BLOB_STORE_ID}.public.blob.vercel-storage.com/${filename}`;
+      const fetchRes = await fetch(url);
+      if (!fetchRes.ok) {
         return res.status(404).json({ ready: false, message: '아직 오늘 브리핑이 준비되지 않았어요' });
       }
+      const data = await fetchRes.json();
       return res.status(200).json({ ready: true, ...data });
     } catch (e) {
-      return res.status(500).json({ ready: false, message: '서버 오류' });
+      return res.status(404).json({ ready: false, message: '아직 준비되지 않았어요' });
     }
   }
 
+  // POST: n8n에서 데이터 저장
   if (req.method === 'POST') {
     if (req.headers['x-secret'] !== process.env.SAVE_SECRET) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -35,9 +39,17 @@ export default async function handler(req, res) {
       if (!Array.isArray(categories)) {
         return res.status(400).json({ error: 'categories 배열이 필요해요' });
       }
-      const payload = { categories, savedAt: new Date().toISOString(), dateStr: getKSTDateStr() };
-      await kv.set(todayKey, payload, { ex: 60 * 60 * 30 }); // 30시간 TTL
-      return res.status(200).json({ ok: true, key: todayKey });
+      const payload = {
+        categories,
+        savedAt: new Date().toISOString(),
+        dateStr: getKSTDateStr()
+      };
+      const blob = await put(filename, JSON.stringify(payload), {
+        access: 'public',
+        contentType: 'application/json',
+        addRandomSuffix: false
+      });
+      return res.status(200).json({ ok: true, url: blob.url });
     } catch (e) {
       return res.status(500).json({ error: e.message });
     }
