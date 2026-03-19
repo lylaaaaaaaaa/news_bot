@@ -36,12 +36,26 @@ export default async function handler(req, res) {
     }
     try {
       let categories = req.body.categories;
-// n8n이 문자열로 보내는 경우 파싱
+// 디버깅용
+console.log('body:', JSON.stringify(req.body));
+console.log('categories type:', typeof categories);
+console.log('categories value:', JSON.stringify(categories));
+
 if (typeof categories === 'string') {
-  try { categories = JSON.parse(categories); } catch(e) {}
+  try { categories = JSON.parse(categories); } catch(e) {
+    console.log('parse error:', e.message);
+  }
+}
+// body 전체가 categories인 경우
+if (!Array.isArray(categories) && Array.isArray(req.body)) {
+  categories = req.body;
 }
 if (!Array.isArray(categories)) {
-  return res.status(400).json({ error: 'categories 배열이 필요해요', received: typeof categories });
+  return res.status(400).json({ 
+    error: 'categories 배열이 필요해요', 
+    received: typeof categories,
+    body: JSON.stringify(req.body).slice(0, 200)
+  });
 }
       const payload = {
         categories,
