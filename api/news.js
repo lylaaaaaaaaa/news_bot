@@ -6,50 +6,50 @@ function getKSTDateStr() {
   return kst.toISOString().slice(0, 10);
 }
 
-function parseCategories(raw) {
-  if (!raw) throw new Error('응답이 비어 있어요');
-  let text = String(raw).trim();
-  text = text.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/, '').trim();
-  const s = text.indexOf('{');
-  const e = text.lastIndexOf('}');
-  if (s < 0 || e < 0) throw new Error('JSON을 찾을 수 없어요');
-  let jsonStr = text.slice(s, e + 1);
-  let parsed;
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch(e1) {
-    try {
-      jsonStr = jsonStr.replace(/,\s*\{[^}]*$/, '').replace(/,\s*$/, '');
-      const ob = (jsonStr.match(/\{/g)||[]).length;
-      const cb = (jsonStr.match(/\}/g)||[]).length;
-      const oar = (jsonStr.match(/\[/g)||[]).length;
-      const car = (jsonStr.match(/\]/g)||[]).length;
-      jsonStr += ']'.repeat(Math.max(0, oar - car)) + '}'.repeat(Math.max(0, ob - cb));
-      parsed = JSON.parse(jsonStr);
-    } catch(e2) {
-      throw new Error('JSON 파싱 실패: ' + e2.message);
+const CATEGORIES = [
+  { name: '정치', query: '정치 국회 정당' },
+  { name: '경제', query: '경제 금융 주식' },
+  { name: '사회', query: '사회 사건 사고' },
+  { name: '연예/문화', query: '연예 문화 엔터테인먼트' },
+  { name: 'IT·테크', query: 'IT 기술 테크 인공지능' },
+  { name: '국제', query: '국제 해외 외교' }
+];
+
+async function fetchNaverNews(query) {
+  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=3&sort=date`;
+  const res = await fetch(url, {
+    headers: {
+      'X-Naver-Client-Id': process.env.NAVER_CLIENT_ID,
+      'X-Naver-Client-Secret': process.env.NAVER_CLIENT_SECRET
     }
-  }
-  if (!Array.isArray(parsed.categories)) throw new Error('categories 없음');
-  return parsed.categories;
+  });
+  const data = await res.json();
+  return (data.items || []).slice(0, 2).map(item => ({
+    title: item.title.replace(/<[^>]+>/g, ''),
+    description: item.description.replace(/<[^>]+>/g, ''),
+    url: item.originallink || item.link,
+    pubDate: item.pubDate
+  }));
 }
 
-async function fetchFromClaude() {
+async function summarizeWithClaude(categoryName, articles) {
+  const articleText = articles.map((a, i) =>
+    `${i+1}. 제목: ${a.title}\n내용: ${a.description}\nURL: ${a.url}`
+  ).join('\n\n');
+
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'web-search-2025-03-05'
+      'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 4000,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 500,
       messages: [{
         role: 'user',
-        content: '오늘 한국 주요 뉴스를 검색해서 아래 JSON으로만 답해. 각 카테고리당 뉴스 1개만. 설명 없이 JSON만.\n{"categories":[{"name":"정치","items":[{"headline":"제목","summary":"한문장요약","why":"이유","url":"링크"}]},{"name":"경제","items":[{"headline":"제목","summary":"한문장요약","why":"이유","url":"링크"}]},{"name":"사회","items":[{"headline":"제목","summary":"한문장요약","why":"이유","url":"링크"}]},{"name":"연예/문화","items":[{"headline":"제목","summary":"한문장요약","why":"이유","url":"링크"}]},{"name":"IT·테크","items":[{"headline":"제목","summary":"한문장요약","why":"이유","url":"링크"}]},{"name":"국제","items":[{"headline":"제목","summary":"한문장요약","why":"이유","url":"링크"}]}]}'
+        content: `아래 뉴스 중 가장 중요한 1개를 골라 JSON으로만 답해. 다른 텍스트 없이 JSON만.\n\n${articleText}\n\n형식: {"headline":"제목","summary":"2문장요약","why":"중요한이유한줄","url":"기사URL"}`
       }]
     })
   });
@@ -57,12 +57,26 @@ async function fetchFromClaude() {
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
 
-  const raw = (data.content || [])
-    .filter(b => b.type === 'text')
-    .map(b => b.text)
-    .join('\n');
+  let raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  raw = raw.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/, '').trim();
+  const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+  if (s < 0 || e < 0) throw new Error('JSON 없음');
+  return JSON.parse(raw.slice(s, e + 1));
+}
 
-  return parseCategories(raw);
+async function buildBriefing() {
+  const categories = [];
+  for (const cat of CATEGORIES) {
+    try {
+      const articles = await fetchNaverNews(cat.query);
+      if (articles.length === 0) continue;
+      const item = await summarizeWithClaude(cat.name, articles);
+      categories.push({ name: cat.name, items: [item] });
+    } catch(e) {
+      console.log(`${cat.name} 실패:`, e.message);
+    }
+  }
+  return categories;
 }
 
 export default async function handler(req, res) {
@@ -82,22 +96,19 @@ export default async function handler(req, res) {
         const { blobs } = await list({ prefix: `briefing-${dateStr}` });
         if (blobs.length > 0) {
           const fetchRes = await fetch(blobs[0].url);
-          const text = await fetchRes.text();
-          const data = JSON.parse(text);
-          // categories가 문자열이면 다시 파싱
-          if (typeof data.categories === 'string') {
-            data.categories = JSON.parse(data.categories);
+          const data = await fetchRes.json();
+          if (Array.isArray(data.categories) && data.categories.length > 0) {
+            return res.status(200).json({ ready: true, cached: true, ...data });
           }
-          if (!Array.isArray(data.categories)) throw new Error('배열 아님');
-          return res.status(200).json({ ready: true, cached: true, ...data });
         }
       } catch(e) {
-        console.log('캐시 로드 실패, 실시간 생성:', e.message);
+        console.log('캐시 로드 실패:', e.message);
       }
     }
 
     try {
-      const categories = await fetchFromClaude();
+      const categories = await buildBriefing();
+      if (categories.length === 0) throw new Error('뉴스를 가져오지 못했어요');
       const payload = { categories, savedAt: new Date().toISOString(), dateStr };
       await put(filename, JSON.stringify(payload), {
         access: 'public',
@@ -118,18 +129,11 @@ export default async function handler(req, res) {
       let categories = req.body.categoriesJson
         ? JSON.parse(req.body.categoriesJson)
         : req.body.categories;
-
-      if (typeof categories === 'string') {
-        categories = JSON.parse(categories.replace(/^=/, ''));
-      }
-      if (!Array.isArray(categories)) {
-        return res.status(400).json({ error: 'categories 배열이 필요해요' });
-      }
+      if (typeof categories === 'string') categories = JSON.parse(categories.replace(/^=/, ''));
+      if (!Array.isArray(categories)) return res.status(400).json({ error: 'categories 배열 필요' });
       const payload = { categories, savedAt: new Date().toISOString(), dateStr };
       const blob = await put(filename, JSON.stringify(payload), {
-        access: 'public',
-        contentType: 'application/json',
-        addRandomSuffix: false
+        access: 'public', contentType: 'application/json', addRandomSuffix: false
       });
       return res.status(200).json({ ok: true, url: blob.url });
     } catch(e) {
