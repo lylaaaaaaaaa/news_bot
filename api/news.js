@@ -7,16 +7,16 @@ function getKSTDateStr() {
 }
 
 const CATEGORIES = [
-  { name: '정치', query: '정치 국회 정당' },
-  { name: '경제', query: '경제 금융 주식' },
-  { name: '사회', query: '사회 사건 사고' },
-  { name: '연예/문화', query: '연예 문화 엔터테인먼트' },
-  { name: 'IT·테크', query: 'IT 기술 테크 인공지능' },
-  { name: '국제', query: '국제 해외 외교' }
+  { name: '정치', query: '정치 국회' },
+  { name: '경제', query: '경제 금융' },
+  { name: '사회', query: '사회 사건' },
+  { name: '연예/문화', query: '연예 문화' },
+  { name: 'IT·테크', query: 'IT 기술' },
+  { name: '국제', query: '국제 해외' }
 ];
 
 async function fetchNaverNews(query) {
-  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=3&sort=date`;
+  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=2&sort=date`;
   const res = await fetch(url, {
     headers: {
       'X-Naver-Client-Id': process.env.NAVER_CLIENT_ID,
@@ -24,18 +24,17 @@ async function fetchNaverNews(query) {
     }
   });
   const data = await res.json();
-  return (data.items || []).slice(0, 2).map(item => ({
+  return (data.items || []).map(item => ({
     title: item.title.replace(/<[^>]+>/g, ''),
     description: item.description.replace(/<[^>]+>/g, ''),
-    url: item.originallink || item.link,
-    pubDate: item.pubDate
+    url: item.originallink || item.link
   }));
 }
 
 async function summarizeWithClaude(categoryName, articles) {
   const articleText = articles.map((a, i) =>
-    `${i+1}. 제목: ${a.title}\n내용: ${a.description}\nURL: ${a.url}`
-  ).join('\n\n');
+    `${i+1}. ${a.title}: ${a.description} (${a.url})`
+  ).join('\n');
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -45,38 +44,37 @@ async function summarizeWithClaude(categoryName, articles) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300,
       messages: [{
         role: 'user',
-        content: `아래 뉴스 중 가장 중요한 1개를 골라 JSON으로만 답해. 다른 텍스트 없이 JSON만.\n\n${articleText}\n\n형식: {"headline":"제목","summary":"2문장요약","why":"중요한이유한줄","url":"기사URL"}`
+        content: `뉴스 중 중요한 1개 골라 JSON만 출력:\n${articleText}\n\n{"headline":"제목","summary":"한줄요약","why":"이유","url":"URL"}`
       }]
     })
   });
 
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
+  let raw = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+  raw = raw.replace(/^```[a-z]*\s*/i,'').replace(/\s*```$/,'').trim();
+  const s=raw.indexOf('{'), e=raw.lastIndexOf('}');
+  if(s<0||e<0) throw new Error('JSON 없음');
+  return JSON.parse(raw.slice(s,e+1));
+}
 
-  let raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
-  raw = raw.replace(/^```[a-z]*\s*/i, '').replace(/\s*```$/, '').trim();
-  const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
-  if (s < 0 || e < 0) throw new Error('JSON 없음');
-  return JSON.parse(raw.slice(s, e + 1));
+async function processCategory(cat) {
+  const articles = await fetchNaverNews(cat.query);
+  if (!articles.length) return null;
+  const item = await summarizeWithClaude(cat.name, articles);
+  return { name: cat.name, items: [item] };
 }
 
 async function buildBriefing() {
-  const categories = [];
-  for (const cat of CATEGORIES) {
-    try {
-      const articles = await fetchNaverNews(cat.query);
-      if (articles.length === 0) continue;
-      const item = await summarizeWithClaude(cat.name, articles);
-      categories.push({ name: cat.name, items: [item] });
-    } catch(e) {
-      console.log(`${cat.name} 실패:`, e.message);
-    }
-  }
-  return categories;
+  // 모든 카테고리 병렬 처리
+  const results = await Promise.allSettled(CATEGORIES.map(cat => processCategory(cat)));
+  return results
+    .filter(r => r.status === 'fulfilled' && r.value)
+    .map(r => r.value);
 }
 
 export default async function handler(req, res) {
@@ -101,19 +99,15 @@ export default async function handler(req, res) {
             return res.status(200).json({ ready: true, cached: true, ...data });
           }
         }
-      } catch(e) {
-        console.log('캐시 로드 실패:', e.message);
-      }
+      } catch(e) {}
     }
 
     try {
       const categories = await buildBriefing();
-      if (categories.length === 0) throw new Error('뉴스를 가져오지 못했어요');
+      if (!categories.length) throw new Error('뉴스를 가져오지 못했어요');
       const payload = { categories, savedAt: new Date().toISOString(), dateStr };
       await put(filename, JSON.stringify(payload), {
-        access: 'public',
-        contentType: 'application/json',
-        addRandomSuffix: false
+        access: 'public', contentType: 'application/json', addRandomSuffix: false
       });
       return res.status(200).json({ ready: true, cached: false, ...payload });
     } catch(e) {
