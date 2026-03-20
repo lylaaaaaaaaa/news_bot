@@ -14,15 +14,16 @@
   .masthead-label { font-size:10px; font-weight:500; letter-spacing:0.3em; color:var(--muted); text-transform:uppercase; margin-bottom:8px; }
   .masthead h1 { font-family:'Noto Serif KR',serif; font-size:clamp(32px,7vw,56px); font-weight:700; letter-spacing:-0.02em; }
   .masthead-date { font-size:12px; color:var(--muted); margin-top:10px; letter-spacing:0.1em; }
-  .loading-state { text-align:center; padding:60px 0; }
+  .refresh-area { display:flex; justify-content:center; padding:20px 0 10px; }
+  .refresh-btn { background:var(--ink); color:var(--paper); border:none; padding:11px 32px; font-family:'Noto Sans KR',sans-serif; font-size:13px; font-weight:500; letter-spacing:0.05em; cursor:pointer; transition:all .2s; }
+  .refresh-btn:hover { background:var(--accent); }
+  .refresh-btn:disabled { background:var(--muted); cursor:not-allowed; }
+  .loading-state { text-align:center; padding:60px 0; display:none; }
+  .loading-state.active { display:block; }
   .ink-drop { display:inline-block; width:8px; height:8px; background:var(--accent); border-radius:50%; animation:inkPulse 1.2s ease-in-out infinite; margin:0 4px; }
   .ink-drop:nth-child(2){animation-delay:.2s} .ink-drop:nth-child(3){animation-delay:.4s}
   @keyframes inkPulse { 0%,100%{transform:scale(.6);opacity:.3} 50%{transform:scale(1.2);opacity:1} }
-  .loading-text { font-size:13px; color:var(--muted); margin-top:16px; letter-spacing:0.05em; }
-  .not-ready { text-align:center; padding:60px 20px; }
-  .not-ready-icon { font-size:36px; margin-bottom:16px; }
-  .not-ready h2 { font-family:'Noto Serif KR',serif; font-size:20px; margin-bottom:8px; }
-  .not-ready p { font-size:13px; color:var(--muted); line-height:1.7; }
+  .loading-text { font-size:13px; color:var(--muted); margin-top:16px; }
   .section-divider { display:flex; align-items:center; gap:12px; margin:28px 0 16px; }
   .section-divider::before,.section-divider::after { content:''; flex:1; height:1px; background:var(--rule); }
   .section-label { font-size:10px; font-weight:500; letter-spacing:0.3em; color:var(--muted); text-transform:uppercase; white-space:nowrap; }
@@ -43,7 +44,10 @@
   .footer-rule { border:none; border-top:3px double var(--rule); margin:40px 0 20px; }
   .footer-text { text-align:center; font-size:11px; color:var(--muted); letter-spacing:0.1em; }
   .saved-at { text-align:center; font-size:11px; color:var(--muted); margin-top:6px; }
+  .error-state { display:none; text-align:center; padding:40px 20px; color:var(--accent); font-size:13px; line-height:1.8; }
+  .error-state.active { display:block; }
   #content { display:none; }
+  #content.active { display:block; }
 </style>
 </head>
 <body>
@@ -54,17 +58,16 @@
     <div class="masthead-date" id="today-date"></div>
   </div>
 
+  <div class="refresh-area">
+    <button class="refresh-btn" id="refresh-btn" onclick="loadBriefing(true)">새 브리핑 받기</button>
+  </div>
+
   <div class="loading-state" id="loading">
     <div><span class="ink-drop"></span><span class="ink-drop"></span><span class="ink-drop"></span></div>
-    <div class="loading-text">브리핑을 불러오고 있어요...</div>
+    <div class="loading-text" id="loading-text">뉴스를 불러오고 있어요...</div>
   </div>
 
-  <div class="not-ready" id="not-ready" style="display:none">
-    <div class="not-ready-icon">☕</div>
-    <h2>아직 준비 중이에요</h2>
-    <p>매일 오전 9시에 업데이트됩니다<br>조금 후에 다시 확인해 주세요</p>
-  </div>
-
+  <div class="error-state" id="error-state"></div>
   <div id="content"></div>
 
   <hr class="footer-rule">
@@ -76,27 +79,46 @@
 document.getElementById('today-date').textContent =
   new Date().toLocaleDateString('ko-KR', {year:'numeric',month:'long',day:'numeric',weekday:'long'});
 
-async function loadBriefing() {
+async function loadBriefing(forceRefresh = false) {
+  const btn = document.getElementById('refresh-btn');
+  const loading = document.getElementById('loading');
+  const content = document.getElementById('content');
+  const errorDiv = document.getElementById('error-state');
+
+  btn.disabled = true;
+  btn.textContent = '불러오는 중...';
+  loading.classList.add('active');
+  content.classList.remove('active');
+  errorDiv.classList.remove('active');
+  content.innerHTML = '';
+
+  if (forceRefresh) {
+    document.getElementById('loading-text').textContent = '최신 뉴스를 검색하고 있어요... (1~2분 소요)';
+  }
+
   try {
-    const res = await fetch('/api/news');
+    const url = forceRefresh ? '/api/news?refresh=1' : '/api/news';
+    const res = await fetch(url);
     const data = await res.json();
 
-    document.getElementById('loading').style.display = 'none';
-
     if (!data.ready || !data.categories) {
-      document.getElementById('not-ready').style.display = 'block';
-      return;
+      throw new Error(data.message || '데이터를 불러오지 못했어요');
     }
 
     renderBriefing(data.categories);
 
+    const label = data.cached ? '저장된 브리핑' : '방금 생성된 브리핑';
     if (data.savedAt) {
       const t = new Date(data.savedAt).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
-      document.getElementById('saved-at').textContent = `오전 ${t} 업데이트`;
+      document.getElementById('saved-at').textContent = `${label} · ${t} 기준`;
     }
   } catch(e) {
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('not-ready').style.display = 'block';
+    errorDiv.innerHTML = e.message + '<br><small style="color:var(--muted)">잠시 후 다시 시도해 주세요</small>';
+    errorDiv.classList.add('active');
+  } finally {
+    loading.classList.remove('active');
+    btn.disabled = false;
+    btn.textContent = '새 브리핑 받기';
   }
 }
 
@@ -105,9 +127,9 @@ function renderBriefing(categories) {
   let html = `<div class="section-divider"><span class="section-label">Today's Headlines</span></div>`;
   categories.forEach((cat, ci) => {
     const items = (cat.items||[]).map((item, ii) => {
-     const searchUrl = 'https://search.naver.com/search.naver?where=news&query=' + encodeURIComponent(item.headline);
-const hl = `<a href="${searchUrl}" target="_blank" rel="noopener">${item.headline}</a>`;
-const link = `<a class="news-link" href="${searchUrl}" target="_blank" rel="noopener">관련 기사 검색 →</a>`;
+      const searchUrl = 'https://search.naver.com/search.naver?where=news&query=' + encodeURIComponent(item.headline);
+      const hl = `<a href="${searchUrl}" target="_blank" rel="noopener">${item.headline||''}</a>`;
+      const link = `<a class="news-link" href="${searchUrl}" target="_blank" rel="noopener">관련 기사 검색 →</a>`;
       return `<div class="news-item" style="animation-delay:${(ci*2+ii)*0.08}s">
         <div class="news-headline">${hl}</div>
         <div class="news-summary">${item.summary||''}</div>
@@ -121,10 +143,11 @@ const link = `<a class="news-link" href="${searchUrl}" target="_blank" rel="noop
     </div>`;
   });
   content.innerHTML = html;
-  content.style.display = 'block';
+  content.classList.add('active');
 }
 
-loadBriefing();
+// 페이지 로드시 자동으로 저장된 데이터 조회
+loadBriefing(false);
 </script>
 </body>
 </html>
